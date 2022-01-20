@@ -5,7 +5,7 @@ type ExtCompiler interface {
 	// Compile compiles the custom keywords in schema m and returns its compiled representation.
 	// if the schema m does not contain the keywords defined by this extension,
 	// compiled representation nil should be returned.
-	Compile(ctx CompilerContext, m map[string]interface{}) (ExtSchema, error)
+	Compile(ctx CompilerContext, m *OrderedMap) (ExtSchema, error)
 }
 
 // ExtSchema is schema representation of custom keyword(s)

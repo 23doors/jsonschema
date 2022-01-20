@@ -21,8 +21,8 @@ var powerOfMeta = jsonschema.MustCompileString("powerOf.json", `{
 
 type powerOfCompiler struct{}
 
-func (powerOfCompiler) Compile(ctx jsonschema.CompilerContext, m map[string]interface{}) (jsonschema.ExtSchema, error) {
-	if pow, ok := m["powerOf"]; ok {
+func (powerOfCompiler) Compile(ctx jsonschema.CompilerContext, m *jsonschema.OrderedMap) (jsonschema.ExtSchema, error) {
+	if pow, ok := m.Get("powerOf"); ok {
 		n, err := pow.(json.Number).Int64()
 		return powerOfSchema(n), err
 	}
@@ -60,6 +60,7 @@ func Example_extension() {
 	if err := c.AddResource("schema.json", strings.NewReader(schema)); err != nil {
 		log.Fatal(err)
 	}
+
 	sch, err := c.Compile("schema.json")
 	if err != nil {
 		log.Fatalf("%#v", err)
