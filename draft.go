@@ -26,15 +26,15 @@ func (d *Draft) loadMeta(base string, schemas map[string]string) {
 }
 
 func (d *Draft) getID(sch interface{}) string {
-	m, ok := sch.(map[string]interface{})
+	m, ok := sch.(*OrderedMap)
 	if !ok {
 		return ""
 	}
-	if _, ok := m["$ref"]; ok && d.version <= 7 {
+	if _, ok := m.Get("$ref"); ok && d.version <= 7 {
 		// $ref prevents a sibling id from changing the base uri
 		return ""
 	}
-	v, ok := m[d.id]
+	v, ok := m.Get(d.id)
 	if !ok {
 		return ""
 	}
@@ -56,7 +56,7 @@ func (d *Draft) resolveID(base string, sch interface{}) (string, error) {
 }
 
 func (d *Draft) anchors(sch interface{}) []string {
-	m, ok := sch.(map[string]interface{})
+	m, ok := sch.(*OrderedMap)
 	if !ok {
 		return nil
 	}
@@ -69,10 +69,10 @@ func (d *Draft) anchors(sch interface{}) []string {
 		anchors = append(anchors, f[1:])
 	}
 
-	if v, ok := m["$anchor"]; ok && d.version >= 2019 {
+	if v, ok := m.Get("$anchor"); ok && d.version >= 2019 {
 		anchors = append(anchors, v.(string))
 	}
-	if v, ok := m["$dynamicAnchor"]; ok && d.version >= 2020 {
+	if v, ok := m.Get("$dynamicAnchor"); ok && d.version >= 2020 {
 		anchors = append(anchors, v.(string))
 	}
 	return anchors
@@ -96,18 +96,18 @@ func (d *Draft) listSubschemas(r *resource, base string, rr map[string]*resource
 		return d.listSubschemas(sr, base, rr)
 	}
 
-	sch, ok := r.doc.(map[string]interface{})
+	sch, ok := r.doc.(*OrderedMap)
 	if !ok {
 		return nil
 	}
 	for kw, pos := range d.subschemas {
-		v, ok := sch[kw]
+		v, ok := sch.Get(kw)
 		if !ok {
 			continue
 		}
 		if pos&self != 0 {
 			switch v := v.(type) {
-			case map[string]interface{}:
+			case *OrderedMap:
 				if err := add(kw, v); err != nil {
 					return err
 				}
@@ -129,8 +129,8 @@ func (d *Draft) listSubschemas(r *resource, base string, rr map[string]*resource
 			}
 		}
 		if pos&prop != 0 {
-			if v, ok := v.(map[string]interface{}); ok {
-				for pname, pval := range v {
+			if v, ok := v.(*OrderedMap); ok {
+				for pname, pval := range v.RawValues() {
 					if err := add(kw+"/"+escape(pname), pval); err != nil {
 						return err
 					}

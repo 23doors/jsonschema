@@ -1,6 +1,7 @@
 package jsonschema
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -139,11 +140,11 @@ func (r *resource) resolveFragment(c *Compiler, sr *resource, f string) (*resour
 			return nil, err
 		}
 		switch d := doc.(type) {
-		case map[string]interface{}:
-			if _, ok := d[item]; !ok {
+		case *OrderedMap:
+			if _, ok := d.Get(item); !ok {
 				return nil, nil
 			}
-			doc = d[item]
+			doc, _ = d.Get(item)
 		case []interface{}:
 			index, err := strconv.Atoi(item)
 			if err != nil {
@@ -259,12 +260,30 @@ func (s *Schema) loc() string {
 }
 
 func unmarshal(r io.Reader) (interface{}, error) {
-	decoder := json.NewDecoder(r)
+	doc := NewOrderedMap()
+	doc.SetUseNumber(true)
+
+	var buf bytes.Buffer
+	tee := io.TeeReader(r, &buf)
+
+	decoder := json.NewDecoder(tee)
 	decoder.UseNumber()
-	var doc interface{}
-	if err := decoder.Decode(&doc); err != nil {
-		return nil, err
+
+	err := decoder.Decode(&doc)
+
+	// Fallback to check if schema is a boolean.
+	if err != nil {
+		decoder = json.NewDecoder(&buf)
+		decoder.UseNumber()
+
+		var b bool
+		if err2 := decoder.Decode(&b); err2 != nil {
+			return nil, err
+		}
+
+		return b, nil
 	}
+
 	if t, _ := decoder.Token(); t != nil {
 		return nil, fmt.Errorf("invalid character %v after top-level value", t)
 	}

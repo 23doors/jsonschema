@@ -142,8 +142,8 @@ func (c *Compiler) findResource(url string) (*resource, error) {
 
 	// set draft
 	r.draft = c.Draft
-	if m, ok := r.doc.(map[string]interface{}); ok {
-		if sch, ok := m["$schema"]; ok {
+	if m, ok := r.doc.(*OrderedMap); ok {
+		if sch, ok := m.Get("$schema"); ok {
 			if _, ok = sch.(string); !ok {
 				return nil, fmt.Errorf("jsonschema: invalid $schema in %s", url)
 			}
@@ -223,8 +223,8 @@ func (c *Compiler) compileDynamicAnchors(r *resource, res *resource) error {
 	rr := r.listResources(res)
 	rr = append(rr, res)
 	for _, sr := range rr {
-		if m, ok := sr.doc.(map[string]interface{}); ok {
-			if _, ok := m["$dynamicAnchor"]; ok {
+		if m, ok := sr.doc.(*OrderedMap); ok {
+			if _, ok := m.Get("$dynamicAnchor"); ok {
 				sch, err := c.compileRef(r, nil, "IGNORED", r, sr.floc)
 				if err != nil {
 					return err
@@ -251,7 +251,7 @@ func (c *Compiler) compile(r *resource, stack []schemaRef, sref schemaRef, res *
 }
 
 func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, res *resource) error {
-	m := res.doc.(map[string]interface{})
+	m := res.doc.(*OrderedMap)
 
 	if err := checkLoop(stack, sref); err != nil {
 		return err
@@ -261,7 +261,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	var s = res.schema
 	var err error
 
-	if ref, ok := m["$ref"]; ok {
+	if ref, ok := m.Get("$ref"); ok {
 		s.Ref, err = c.compileRef(r, stack, "$ref", res, ref.(string))
 		if err != nil {
 			return err
@@ -273,7 +273,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 
 	if r.draft.version >= 2019 {
-		if ref, ok := m["$recursiveRef"]; ok {
+		if ref, ok := m.Get("$recursiveRef"); ok {
 			s.RecursiveRef, err = c.compileRef(r, stack, "$recursiveRef", res, ref.(string))
 			if err != nil {
 				return err
@@ -281,7 +281,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		}
 	}
 	if r.draft.version >= 2020 {
-		if dref, ok := m["$dynamicRef"]; ok {
+		if dref, ok := m.Get("$dynamicRef"); ok {
 			s.DynamicRef, err = c.compileRef(r, stack, "$dynamicRef", res, dref.(string))
 			if err != nil {
 				return err
@@ -289,7 +289,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		}
 	}
 
-	if t, ok := m["type"]; ok {
+	if t, ok := m.Get("type"); ok {
 		switch t := t.(type) {
 		case string:
 			s.Types = []string{t}
@@ -298,7 +298,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		}
 	}
 
-	if e, ok := m["enum"]; ok {
+	if e, ok := m.Get("enum"); ok {
 		s.Enum = e.([]interface{})
 		allPrimitives := true
 		for _, item := range s.Enum {
@@ -327,7 +327,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 
 	loadSchema := func(pname string, stack []schemaRef) (*Schema, error) {
-		if _, ok := m[pname]; ok {
+		if _, ok := m.Get(pname); ok {
 			return compile(stack, escape(pname))
 		}
 		return nil, nil
@@ -338,7 +338,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 
 	loadSchemas := func(pname string, stack []schemaRef) ([]*Schema, error) {
-		if pvalue, ok := m[pname]; ok {
+		if pvalue, ok := m.Get(pname); ok {
 			pvalue := pvalue.([]interface{})
 			schemas := make([]*Schema, len(pvalue))
 			for i := range pvalue {
@@ -363,7 +363,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 
 	loadInt := func(pname string) int {
-		if num, ok := m[pname]; ok {
+		if num, ok := m.Get(pname); ok {
 			i, _ := num.(json.Number).Int64()
 			return int(i)
 		}
@@ -371,29 +371,31 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 	s.MinProperties, s.MaxProperties = loadInt("minProperties"), loadInt("maxProperties")
 
-	if req, ok := m["required"]; ok {
+	if req, ok := m.Get("required"); ok {
 		s.Required = toStrings(req.([]interface{}))
 	}
 
-	if props, ok := m["properties"]; ok {
-		props := props.(map[string]interface{})
-		s.Properties = make(map[string]*Schema, len(props))
-		for pname := range props {
-			s.Properties[pname], err = compile(nil, "properties/"+escape(pname))
+	if props, ok := m.Get("properties"); ok {
+		props := props.(*OrderedMap)
+		s.Properties = NewOrderedMap()
+		for _, pname := range props.Keys() {
+			val, err := compile(nil, "properties/"+escape(pname))
 			if err != nil {
 				return err
 			}
+
+			s.Properties.Set(pname, val)
 		}
 	}
 
-	if regexProps, ok := m["regexProperties"]; ok {
+	if regexProps, ok := m.Get("regexProperties"); ok {
 		s.RegexProperties = regexProps.(bool)
 	}
 
-	if patternProps, ok := m["patternProperties"]; ok {
-		patternProps := patternProps.(map[string]interface{})
-		s.PatternProperties = make(map[*regexp.Regexp]*Schema, len(patternProps))
-		for pattern := range patternProps {
+	if patternProps, ok := m.Get("patternProperties"); ok {
+		patternProps := patternProps.(*OrderedMap)
+		s.PatternProperties = make(map[*regexp.Regexp]*Schema, len(patternProps.Keys()))
+		for _, pattern := range patternProps.Keys() {
 			s.PatternProperties[regexp.MustCompile(pattern)], err = compile(nil, "patternProperties/"+escape(pattern))
 			if err != nil {
 				return err
@@ -401,11 +403,11 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		}
 	}
 
-	if additionalProps, ok := m["additionalProperties"]; ok {
+	if additionalProps, ok := m.Get("additionalProperties"); ok {
 		switch additionalProps := additionalProps.(type) {
 		case bool:
 			s.AdditionalProperties = additionalProps
-		case map[string]interface{}:
+		case *OrderedMap:
 			s.AdditionalProperties, err = compile(nil, "additionalProperties")
 			if err != nil {
 				return err
@@ -413,10 +415,10 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		}
 	}
 
-	if deps, ok := m["dependencies"]; ok {
-		deps := deps.(map[string]interface{})
-		s.Dependencies = make(map[string]interface{}, len(deps))
-		for pname, pvalue := range deps {
+	if deps, ok := m.Get("dependencies"); ok {
+		deps := deps.(*OrderedMap)
+		s.Dependencies = make(map[string]interface{}, len(deps.Keys()))
+		for pname, pvalue := range deps.RawValues() {
 			switch pvalue := pvalue.(type) {
 			case []interface{}:
 				s.Dependencies[pname] = toStrings(pvalue)
@@ -430,17 +432,17 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 
 	if r.draft.version >= 2019 {
-		if deps, ok := m["dependentRequired"]; ok {
-			deps := deps.(map[string]interface{})
-			s.DependentRequired = make(map[string][]string, len(deps))
-			for pname, pvalue := range deps {
+		if deps, ok := m.Get("dependentRequired"); ok {
+			deps := deps.(*OrderedMap)
+			s.DependentRequired = make(map[string][]string, len(deps.Keys()))
+			for pname, pvalue := range deps.RawValues() {
 				s.DependentRequired[pname] = toStrings(pvalue.([]interface{}))
 			}
 		}
-		if deps, ok := m["dependentSchemas"]; ok {
-			deps := deps.(map[string]interface{})
-			s.DependentSchemas = make(map[string]*Schema, len(deps))
-			for pname := range deps {
+		if deps, ok := m.Get("dependentSchemas"); ok {
+			deps := deps.(*OrderedMap)
+			s.DependentSchemas = make(map[string]*Schema, len(deps.Keys()))
+			for _, pname := range deps.Keys() {
 				s.DependentSchemas[pname], err = compile(stack, "dependentSchemas/"+escape(pname))
 				if err != nil {
 					return err
@@ -457,7 +459,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 
 	s.MinItems, s.MaxItems = loadInt("minItems"), loadInt("maxItems")
 
-	if unique, ok := m["uniqueItems"]; ok {
+	if unique, ok := m.Get("uniqueItems"); ok {
 		s.UniqueItems = unique.(bool)
 	}
 
@@ -469,18 +471,18 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 			return err
 		}
 	} else {
-		if items, ok := m["items"]; ok {
+		if items, ok := m.Get("items"); ok {
 			switch items.(type) {
 			case []interface{}:
 				s.Items, err = loadSchemas("items", nil)
 				if err != nil {
 					return err
 				}
-				if additionalItems, ok := m["additionalItems"]; ok {
+				if additionalItems, ok := m.Get("additionalItems"); ok {
 					switch additionalItems := additionalItems.(type) {
 					case bool:
 						s.AdditionalItems = additionalItems
-					case map[string]interface{}:
+					case *OrderedMap:
 						s.AdditionalItems, err = compile(nil, "additionalItems")
 						if err != nil {
 							return err
@@ -498,17 +500,17 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 
 	s.MinLength, s.MaxLength = loadInt("minLength"), loadInt("maxLength")
 
-	if pattern, ok := m["pattern"]; ok {
+	if pattern, ok := m.Get("pattern"); ok {
 		s.Pattern = regexp.MustCompile(pattern.(string))
 	}
 
-	if format, ok := m["format"]; ok {
+	if format, ok := m.Get("format"); ok {
 		s.Format = format.(string)
 		s.format, _ = Formats[s.Format]
 	}
 
 	loadRat := func(pname string) *big.Rat {
-		if num, ok := m[pname]; ok {
+		if num, ok := m.Get(pname); ok {
 			r, _ := new(big.Rat).SetString(string(num.(json.Number)))
 			return r
 		}
@@ -516,7 +518,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 
 	s.Minimum = loadRat("minimum")
-	if exclusive, ok := m["exclusiveMinimum"]; ok {
+	if exclusive, ok := m.Get("exclusiveMinimum"); ok {
 		if exclusive, ok := exclusive.(bool); ok {
 			if exclusive {
 				s.Minimum, s.ExclusiveMinimum = nil, s.Minimum
@@ -527,7 +529,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 
 	s.Maximum = loadRat("maximum")
-	if exclusive, ok := m["exclusiveMaximum"]; ok {
+	if exclusive, ok := m.Get("exclusiveMaximum"); ok {
 		if exclusive, ok := exclusive.(bool); ok {
 			if exclusive {
 				s.Maximum, s.ExclusiveMaximum = nil, s.Maximum
@@ -540,17 +542,17 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	s.MultipleOf = loadRat("multipleOf")
 
 	if c.ExtractAnnotations {
-		if title, ok := m["title"]; ok {
+		if title, ok := m.Get("title"); ok {
 			s.Title = title.(string)
 		}
-		if description, ok := m["description"]; ok {
+		if description, ok := m.Get("description"); ok {
 			s.Description = description.(string)
 		}
-		s.Default = m["default"]
+		s.Default, _ = m.Get("default")
 	}
 
 	if r.draft.version >= 6 {
-		if c, ok := m["const"]; ok {
+		if c, ok := m.Get("const"); ok {
 			s.Constant = []interface{}{c}
 		}
 		if s.PropertyNames, err = loadSchema("propertyNames", nil); err != nil {
@@ -567,7 +569,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 	}
 
 	if r.draft.version >= 7 {
-		if m["if"] != nil {
+		if _, ok := m.Get("if"); ok {
 			if s.If, err = loadSchema("if", stack); err != nil {
 				return err
 			}
@@ -578,25 +580,25 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 				return err
 			}
 		}
-		if encoding, ok := m["contentEncoding"]; ok {
+		if encoding, ok := m.Get("contentEncoding"); ok {
 			s.ContentEncoding = encoding.(string)
 			s.decoder, _ = Decoders[s.ContentEncoding]
 		}
-		if mediaType, ok := m["contentMediaType"]; ok {
+		if mediaType, ok := m.Get("contentMediaType"); ok {
 			s.ContentMediaType = mediaType.(string)
 			s.mediaType, _ = MediaTypes[s.ContentMediaType]
 		}
 		if c.ExtractAnnotations {
-			if comment, ok := m["$comment"]; ok {
+			if comment, ok := m.Get("$comment"); ok {
 				s.Comment = comment.(string)
 			}
-			if readOnly, ok := m["readOnly"]; ok {
+			if readOnly, ok := m.Get("readOnly"); ok {
 				s.ReadOnly = readOnly.(bool)
 			}
-			if writeOnly, ok := m["writeOnly"]; ok {
+			if writeOnly, ok := m.Get("writeOnly"); ok {
 				s.WriteOnly = writeOnly.(bool)
 			}
-			if examples, ok := m["examples"]; ok {
+			if examples, ok := m.Get("examples"); ok {
 				s.Examples = examples.([]interface{})
 			}
 		}
@@ -615,7 +617,7 @@ func (c *Compiler) compileMap(r *resource, stack []schemaRef, sref schemaRef, re
 		}
 
 		if c.ExtractAnnotations {
-			if deprecated, ok := m["deprecated"]; ok {
+			if deprecated, ok := m.Get("deprecated"); ok {
 				s.Deprecated = deprecated.(bool)
 			}
 		}

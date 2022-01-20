@@ -39,10 +39,10 @@ type Schema struct {
 	Else            *Schema // nil, when If is nil.
 
 	// object validations
-	MinProperties         int      // -1 if not specified.
-	MaxProperties         int      // -1 if not specified.
-	Required              []string // list of required properties.
-	Properties            map[string]*Schema
+	MinProperties         int         // -1 if not specified.
+	MaxProperties         int         // -1 if not specified.
+	Required              []string    // list of required properties.
+	Properties            *OrderedMap // *Schema
 	PropertyNames         *Schema
 	RegexProperties       bool // property names must be valid regex. used only in draft4 as workaround in metaschema.
 	PatternProperties     map[*regexp.Regexp]*Schema
@@ -114,13 +114,13 @@ func newSchema(url, floc string, doc interface{}) *Schema {
 		MaxLength:     -1,
 	}
 
-	if doc, ok := doc.(map[string]interface{}); ok {
-		if ra, ok := doc["$recursiveAnchor"]; ok {
+	if doc, ok := doc.(*OrderedMap); ok {
+		if ra, ok := doc.Get("$recursiveAnchor"); ok {
 			if ra, ok := ra.(bool); ok {
 				s.RecursiveAnchor = ra
 			}
 		}
-		if da, ok := doc["$dynamicAnchor"]; ok {
+		if da, ok := doc.Get("$dynamicAnchor"); ok {
 			if da, ok := da.(string); ok {
 				s.DynamicAnchor = da
 			}
@@ -181,6 +181,10 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 	}
 	scope = append(scope, sref)
 	vscope++
+
+	if om, ok := v.(*OrderedMap); ok {
+		v = om.RawValues()
+	}
 
 	// populate result
 	switch v := v.(type) {
@@ -304,7 +308,9 @@ func (s *Schema) validate(scope []schemaRef, vscope int, spath string, v interfa
 			}
 		}
 
-		for pname, sch := range s.Properties {
+		for _, pname := range s.Properties.Keys() {
+			pval, _ := s.Properties.Get(pname)
+			sch := pval.(*Schema)
 			if pvalue, ok := v[pname]; ok {
 				delete(result.unevalProps, pname)
 				if err := validate(sch, "properties/"+escape(pname), pvalue, escape(pname)); err != nil {
@@ -737,7 +743,7 @@ func jsonType(v interface{}) string {
 		return "string"
 	case []interface{}:
 		return "array"
-	case map[string]interface{}:
+	case map[string]interface{}, *OrderedMap:
 		return "object"
 	}
 	panic(InvalidJSONTypeError(fmt.Sprintf("%T", v)))
@@ -749,6 +755,15 @@ func equals(v1, v2 interface{}) bool {
 	if v1Type != jsonType(v2) {
 		return false
 	}
+
+	if om, ok := v1.(*OrderedMap); ok {
+		v1 = om.RawValues()
+	}
+
+	if om, ok := v2.(*OrderedMap); ok {
+		v2 = om.RawValues()
+	}
+
 	switch v1Type {
 	case "array":
 		arr1, arr2 := v1.([]interface{}), v2.([]interface{})
